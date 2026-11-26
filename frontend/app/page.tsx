@@ -87,11 +87,61 @@ function CitationChip({ number, source }: { number: number; source?: Source }) {
   );
 }
 
-function answerMarkdown(turn: Turn) {
-  return turn.answer.replace(/\[(\d+)\](?!\()/g, (citation, number) => {
+const PROTECTED = /(`[^`]*`|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)/;
+
+function answerMarkdown(turn: Turn, mentions: string[] = []) {
+  let text = turn.answer.replace(/\[(\d+)\](?!\()/g, (citation, number) => {
     const source = turn.sources[Number(number) - 1];
     return source ? citation + "(" + source.url.replaceAll("(", "%28").replaceAll(")", "%29") + ")" : citation;
   });
+  // Link the first mention of each entity that has related pages, outside code, links and URLs.
+  mentions.forEach((name, index) => {
+    const pattern = new RegExp("(?<![\\w])" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w])");
+    const parts = text.split(PROTECTED);
+    for (let part = 0; part < parts.length; part += 2) {
+      if (pattern.test(parts[part])) {
+        parts[part] = parts[part].replace(pattern, (match) => `[${match}](#related-${index})`);
+        text = parts.join("");
+        return;
+      }
+    }
+  });
+  return text;
+}
+
+function groupByEntity(items: RelatedItem[]) {
+  const groups = new Map<string, RelatedItem[]>();
+  for (const item of items) {
+    for (const entity of item.entities) {
+      if (/[[\]()]/.test(entity)) continue;
+      const pages = groups.get(entity) ?? [];
+      if (pages.length < 3 && !pages.some((page) => page.url === item.url)) groups.set(entity, [...pages, item]);
+    }
+  }
+  return [...groups.entries()].map(([name, pages]) => ({ name, pages }));
+}
+
+function RelatedMention({ label, pages }: { label: string; pages: RelatedItem[] }) {
+  return (
+    <span className="mention-wrap">
+      <button type="button" className="mention" aria-label={`Related pages about ${label}`}>
+        {label}<ExternalLink size={11} aria-hidden="true" />
+      </button>
+      <span className="mention-card" role="tooltip">
+        <span className="citation-domain">Read more about {label}</span>
+        {pages.map((page) => {
+          const summary = page.description || page.excerpt;
+          return (
+            <a key={page.url} className="mention-page" href={page.url} target="_blank" rel="noopener noreferrer">
+              <small>{page.domain}{formatDate(page.published) && <> · {formatDate(page.published)}</>}</small>
+              <strong>{page.title}</strong>
+              <span>{summary.slice(0, 160)}{summary.length > 160 ? "…" : ""}</span>
+            </a>
+          );
+        })}
+      </span>
+    </span>
+  );
 }
 
 function formatDate(value: string) {
@@ -105,7 +155,7 @@ function DocumentChip({ reference, quote }: { reference?: DocumentRef; quote?: s
   return (
     <a className="doc-chip" href={reference.url} target="_blank" rel="noopener noreferrer"
       title={quote ? `${reference.title}: “${quote}”` : reference.title}>
-      <span>{reference.label}</span> {hostOf(reference.url)}
+      {reference.label.startsWith("[") && <span>{reference.label}</span>} {hostOf(reference.url)}
     </a>
   );
 }
@@ -113,12 +163,17 @@ function DocumentChip({ reference, quote }: { reference?: DocumentRef; quote?: s
 function CrossDocumentAnalysis({ analysis }: { analysis: Analysis }) {
   const byId = new Map(analysis.documents.map((document) => [document.id, document]));
   const { common_findings: common, conflicts, unique_insights: unique, clusters } = analysis;
-  if (!common.length && !conflicts.length && !unique.length && !clusters.length) return null;
+  if (!common.length && !conflicts.length && !unique.length) return null;
+  const agreeing = new Set(common.flatMap((finding) => finding.sources.map((quote) => quote.document))).size;
   return (
-    <details className="analysis" open>
-      <summary>Cross-document analysis</summary>
-      <p className="analysis-note">Quotes from the answer’s sources ([n]) and the related pages (Rn). Similar wording means two
-        sources discuss the same thing, not that they are correct.</p>
+    <details className="analysis">
+      <summary>
+        {common.length > 0 && <span className="badge-agree"><Check size={13} aria-hidden="true" /> {agreeing} sources agree on {common.length} {common.length === 1 ? "point" : "points"}</span>}
+        {conflicts.length > 0 && <span className="badge-conflict">⚠ {conflicts.length} possible {conflicts.length === 1 ? "conflict" : "conflicts"}</span>}
+        {unique.length > 0 && <span>{unique.length} unique {unique.length === 1 ? "insight" : "insights"}</span>}
+      </summary>
+      <p className="analysis-note">Quotes from the answer’s sources and related pages. Similar wording means two sources discuss
+        the same thing, not that they are correct.</p>
       {common.length > 0 && <section>
         <h3>Common findings</h3>
         <ul>{common.map((finding, index) => (
@@ -159,38 +214,21 @@ function CrossDocumentAnalysis({ analysis }: { analysis: Analysis }) {
   );
 }
 
-function RelatedResearch({ state }: { state?: IntelligenceState }) {
+type MentionGroup = { name: string; pages: RelatedItem[] };
+
+function RelatedResearch({ state, unplaced }: { state?: IntelligenceState; unplaced: MentionGroup[] }) {
   if (!state || state.status === "error") return null;
   if (state.status === "loading") {
-    return <section className="related" aria-busy="true"><p className="related-loading">Finding related research…</p></section>;
+    return <p className="related-loading" aria-busy="true">Comparing sources and finding related pages…</p>;
   }
-  const items = state.data?.items ?? [];
   const analysis = state.data?.analysis;
-  if (!items.length && !analysis?.documents.length) return null;
   return (
-    <section className="related" aria-label="Related research and resources">
-      {items.length > 0 && <>
-        <div className="source-heading"><Compass size={16} /> Related Research &amp; Resources</div>
-        <ol className="related-list">{items.map((item, index) => (
-          <li key={item.url}>
-            <a className="related-item" href={item.url} target="_blank" rel="noopener noreferrer">
-              <small>
-                <span className="related-number">R{index + 1}</span> {item.domain}
-                {formatDate(item.published) && <> · {formatDate(item.published)}</>}
-                <span className={"related-match " + item.match}>{item.match === "strong" ? "Strong match" : "Related"}</span>
-              </small>
-              <strong>{item.title} <ExternalLink size={13} aria-hidden="true" /></strong>
-              {item.description && <span className="related-description">{item.description}</span>}
-              <span className="related-excerpt">{item.excerpt}</span>
-              <span className="related-why">
-                {item.entities.length > 0 && <>Mentions {item.entities.join(", ")} · </>}Related to: “{item.answer_sentence}”
-              </span>
-            </a>
-          </li>
-        ))}</ol>
-      </>}
+    <div className="related">
+      {unplaced.length > 0 && <p className="read-more"><Compass size={14} aria-hidden="true" /> Read more:{" "}
+        {unplaced.map((group) => <RelatedMention key={group.name} label={group.name} pages={group.pages} />)}
+      </p>}
       {analysis && <CrossDocumentAnalysis analysis={analysis} />}
-    </section>
+    </div>
   );
 }
 
@@ -373,17 +411,29 @@ export default function Home() {
               {index === 0 ? <h1>{turn.question}</h1> : <h2>{turn.question}</h2>}
               <div className="turn-layout">
                 <div className="turn-main">
-                  {turn.answer && <div className="answer"><Markdown remarkPlugins={[remarkGfm]} disallowedElements={["img"]} components={{
-                    a: ({ children, href }) => {
-                      const label = String(children);
-                      if (/^\d+$/.test(label)) {
-                        const number = Number(label);
-                        return <CitationChip number={number} source={turn.sources[number - 1]} />;
-                      }
-                      return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
-                    },
-                  }}>{answerMarkdown(turn)}</Markdown></div>}
-                  <RelatedResearch state={research[current.id + ":" + index]} />
+                  {(() => {
+                    const state = research[current.id + ":" + index];
+                    const groups = state?.status === "done" ? groupByEntity(state.data?.items ?? []) : [];
+                    const markdown = answerMarkdown(turn, groups.map((group) => group.name));
+                    const unplaced = groups.filter((_, i) => !markdown.includes(`(#related-${i})`));
+                    return <>
+                      {turn.answer && <div className="answer"><Markdown remarkPlugins={[remarkGfm]} disallowedElements={["img"]} components={{
+                        a: ({ children, href }) => {
+                          const label = String(children);
+                          const related = href?.match(/^#related-(\d+)$/);
+                          if (related && groups[Number(related[1])]) {
+                            return <RelatedMention label={label} pages={groups[Number(related[1])].pages} />;
+                          }
+                          if (/^\d+$/.test(label)) {
+                            const number = Number(label);
+                            return <CitationChip number={number} source={turn.sources[number - 1]} />;
+                          }
+                          return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+                        },
+                      }}>{markdown}</Markdown></div>}
+                      <RelatedResearch state={state} unplaced={unplaced} />
+                    </>;
+                  })()}
                 </div>
                 {turn.sources.length > 0 && <aside className="source-rail" aria-label="Sources">
                   <div className="source-heading">
