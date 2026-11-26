@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BookOpen, Check, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Plus, Send, Square, Sun, X } from "lucide-react";
+import { BookOpen, Check, Compass, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Plus, Send, Square, Sun, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,19 @@ type Turn = { question: string; answer: string; sources: Source[]; verification?
 type Thread = { id: string; turns: Turn[] };
 type SavedTurn = Turn & { thread_id: string };
 type Mode = "web" | "chat";
+type RelatedItem = {
+  url: string; title: string; domain: string; published: string; description: string; excerpt: string;
+  entities: string[]; answer_sentence: string; match: "strong" | "related";
+};
+type DocumentRef = { id: string; label: string; url: string; title: string };
+type Quote = { document: string; text: string };
+type Analysis = {
+  documents: DocumentRef[]; similarity: number[][]; clusters: { label: string; documents: string[] }[];
+  common_findings: { text: string; sources: Quote[] }[]; conflicts: { reason: string; claims: Quote[] }[];
+  unique_insights: Quote[];
+};
+type Intelligence = { items: RelatedItem[]; analysis: Analysis };
+type IntelligenceState = { status: "loading" | "done" | "error"; data?: Intelligence };
 
 const prompts = [
   ["Career", "How to become top LinkedIn creator"],
@@ -81,6 +94,106 @@ function answerMarkdown(turn: Turn) {
   });
 }
 
+function formatDate(value: string) {
+  const date = new Date(value);
+  return value && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+}
+
+function DocumentChip({ reference, quote }: { reference?: DocumentRef; quote?: string }) {
+  if (!reference) return null;
+  return (
+    <a className="doc-chip" href={reference.url} target="_blank" rel="noopener noreferrer"
+      title={quote ? `${reference.title}: “${quote}”` : reference.title}>
+      <span>{reference.label}</span> {hostOf(reference.url)}
+    </a>
+  );
+}
+
+function CrossDocumentAnalysis({ analysis }: { analysis: Analysis }) {
+  const byId = new Map(analysis.documents.map((document) => [document.id, document]));
+  const { common_findings: common, conflicts, unique_insights: unique, clusters } = analysis;
+  if (!common.length && !conflicts.length && !unique.length && !clusters.length) return null;
+  return (
+    <details className="analysis" open>
+      <summary>Cross-document analysis</summary>
+      <p className="analysis-note">Quotes from the answer’s sources ([n]) and the related pages (Rn). Similar wording means two
+        sources discuss the same thing, not that they are correct.</p>
+      {common.length > 0 && <section>
+        <h3>Common findings</h3>
+        <ul>{common.map((finding, index) => (
+          <li key={index}>
+            <q>{finding.text}</q>
+            <div className="chips">Found in {finding.sources.length} sources: {finding.sources.map((quote) => (
+              <DocumentChip key={quote.document} reference={byId.get(quote.document)} quote={quote.text} />
+            ))}</div>
+          </li>
+        ))}</ul>
+      </section>}
+      {conflicts.length > 0 && <section>
+        <h3>Possible conflicts</h3>
+        <ul>{conflicts.map((conflict, index) => (
+          <li key={index} className="conflict">
+            <span className="analysis-reason">{conflict.reason}</span>
+            {conflict.claims.map((quote) => (
+              <div key={quote.document}><q>{quote.text}</q> <DocumentChip reference={byId.get(quote.document)} /></div>
+            ))}
+          </li>
+        ))}</ul>
+      </section>}
+      {unique.length > 0 && <section>
+        <h3>Unique insights</h3>
+        <ul>{unique.map((quote) => (
+          <li key={quote.document}><q>{quote.text}</q> <DocumentChip reference={byId.get(quote.document)} /></li>
+        ))}</ul>
+      </section>}
+      {clusters.length > 0 && <section>
+        <h3>Related documents</h3>
+        <ul>{clusters.map((cluster, index) => (
+          <li key={index}><strong>{cluster.label}</strong> <div className="chips">{cluster.documents.map((id) => (
+            <DocumentChip key={id} reference={byId.get(id)} />
+          ))}</div></li>
+        ))}</ul>
+      </section>}
+    </details>
+  );
+}
+
+function RelatedResearch({ state }: { state?: IntelligenceState }) {
+  if (!state || state.status === "error") return null;
+  if (state.status === "loading") {
+    return <section className="related" aria-busy="true"><p className="related-loading">Finding related research…</p></section>;
+  }
+  const items = state.data?.items ?? [];
+  const analysis = state.data?.analysis;
+  if (!items.length && !analysis?.documents.length) return null;
+  return (
+    <section className="related" aria-label="Related research and resources">
+      {items.length > 0 && <>
+        <div className="source-heading"><Compass size={16} /> Related Research &amp; Resources</div>
+        <ol className="related-list">{items.map((item, index) => (
+          <li key={item.url}>
+            <a className="related-item" href={item.url} target="_blank" rel="noopener noreferrer">
+              <small>
+                <span className="related-number">R{index + 1}</span> {item.domain}
+                {formatDate(item.published) && <> · {formatDate(item.published)}</>}
+                <span className={"related-match " + item.match}>{item.match === "strong" ? "Strong match" : "Related"}</span>
+              </small>
+              <strong>{item.title} <ExternalLink size={13} aria-hidden="true" /></strong>
+              {item.description && <span className="related-description">{item.description}</span>}
+              <span className="related-excerpt">{item.excerpt}</span>
+              <span className="related-why">
+                {item.entities.length > 0 && <>Mentions {item.entities.join(", ")} · </>}Related to: “{item.answer_sentence}”
+              </span>
+            </a>
+          </li>
+        ))}</ol>
+      </>}
+      {analysis && <CrossDocumentAnalysis analysis={analysis} />}
+    </section>
+  );
+}
+
 export default function Home() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [current, setCurrent] = useState<Thread | null>(null);
@@ -92,6 +205,28 @@ export default function Home() {
   const [menu, setMenu] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Related research is keyed by "<thread id>:<turn index>" and kept apart from the turns, so it can
+  // arrive after the answer (even while the next question runs) without overwriting thread state.
+  const [research, setResearch] = useState<Record<string, IntelligenceState>>({});
+  useEffect(() => {
+    try { setResearch(JSON.parse(localStorage.getItem("prama-research") || "{}")); } catch {}
+  }, []);
+
+  function loadResearch(key: string, body: object) {
+    setResearch((all) => ({ ...all, [key]: { status: "loading" } }));
+    fetch("/api/related", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Related research is unavailable.");
+        const data: Intelligence = await response.json();
+        setResearch((all) => {
+          const next = { ...all, [key]: { status: "done" as const, data } };
+          const kept = Object.entries(next).filter(([, value]) => value.status === "done").slice(-30);
+          try { localStorage.setItem("prama-research", JSON.stringify(Object.fromEntries(kept))); } catch {}
+          return next;
+        });
+      })
+      .catch(() => setResearch((all) => ({ ...all, [key]: { status: "error" } })));
+  }
   const session = useRef("");
   const request = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -171,6 +306,14 @@ export default function Home() {
         update();
       });
       if (!completed) throw new Error("The stream ended early. Try again.");
+      if (mode === "web" && turn.sources.length > 0) {
+        // Runs after the answer is complete and never blocks the next question.
+        loadResearch(thread.id + ":" + thread.turns.length, {
+          question: clean,
+          answer: turn.answer,
+          sources: turn.sources.slice(0, 8).map(({ url, title, content }) => ({ url, title, content: content.slice(0, 8000) })),
+        });
+      }
     } catch (failure) {
       setError(controller.signal.aborted ? "Answer stopped." : failure instanceof Error ? failure.message : "Something went wrong.");
       if (!turn.answer) {
@@ -240,6 +383,7 @@ export default function Home() {
                       return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
                     },
                   }}>{answerMarkdown(turn)}</Markdown></div>}
+                  <RelatedResearch state={research[current.id + ":" + index]} />
                 </div>
                 {turn.sources.length > 0 && <aside className="source-rail" aria-label="Sources">
                   <div className="source-heading">

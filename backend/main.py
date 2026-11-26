@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
+from intelligence import RelatedRequest, research_intelligence
 
 from research import JinaAuthError, Query, Source, generate_answer, retrieve_sources, settings, verify_answer
 
@@ -140,4 +141,44 @@ async def search(query: Query, thread: UUID, x_session_id: UUID = Header()):
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
+DEMO_INTELLIGENCE = {
+    "entities": ["Jina Reader", "Groq"],
+    "queries": [],
+    "items": [
+        {"url": "https://jina.ai/reader/", "title": "Jina Reader", "domain": "jina.ai", "published": "",
+         "description": "Convert a URL into LLM-friendly input.",
+         "excerpt": "Reader converts any URL to clean Markdown so language models can ground answers in full page text.",
+         "entities": ["Jina Reader"], "answer_sentence": "Jina Reader extracts full pages.", "match": "strong",
+         "score": 0.84},
+    ],
+    "analysis": {
+        "documents": [
+            {"id": "S1", "label": "[1]", "url": "https://jina.ai/reader/", "title": "Jina Reader"},
+            {"id": "R1", "label": "R1", "url": "https://jina.ai/reader/", "title": "Jina Reader"},
+        ],
+        "similarity": [[1.0, 0.9], [0.9, 1.0]],
+        "clusters": [{"label": "Jina Reader", "documents": ["S1", "R1"]}],
+        "common_findings": [{"text": "Jina Reader converts a URL into clean Markdown for language models.",
+                             "sources": [{"document": "S1", "text": "Jina Reader converts a URL into clean Markdown."},
+                                         {"document": "R1", "text": "Reader converts any URL to clean Markdown."}]}],
+        "conflicts": [],
+        "unique_insights": [],
+    },
+}
+
+
+@app.post("/related")
+async def related(request: RelatedRequest):
+    """Related pages for an answer and a cross-document analysis; shown below the answer."""
+    if settings.demo_mode:
+        return DEMO_INTELLIGENCE
+    try:
+        return await research_intelligence(app.state.client, request)
+    except JinaAuthError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        log.error("Related research failed: %s", type(exc).__name__)
+        raise HTTPException(502, "Related research is unavailable right now.") from exc
 
