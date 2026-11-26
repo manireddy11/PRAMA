@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BookOpen, Check, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Plus, Send, Square, Sun, X } from "lucide-react";
+import { BookOpen, Check, Compass, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Plus, Send, Square, Sun, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,19 @@ type Turn = { question: string; answer: string; sources: Source[]; verification?
 type Thread = { id: string; turns: Turn[] };
 type SavedTurn = Turn & { thread_id: string };
 type Mode = "web" | "chat";
+type RelatedItem = {
+  url: string; title: string; domain: string; published: string; description: string; excerpt: string;
+  entities: string[]; answer_sentence: string; match: "strong" | "related";
+};
+type DocumentRef = { id: string; label: string; url: string; title: string };
+type Quote = { document: string; text: string };
+type Analysis = {
+  documents: DocumentRef[]; similarity: number[][]; clusters: { label: string; documents: string[] }[];
+  common_findings: { text: string; sources: Quote[] }[]; conflicts: { reason: string; claims: Quote[] }[];
+  unique_insights: Quote[];
+};
+type Intelligence = { items: RelatedItem[]; analysis: Analysis };
+type IntelligenceState = { status: "loading" | "done" | "error"; data?: Intelligence };
 
 const prompts = [
   ["Career", "How to become top LinkedIn creator"],
@@ -74,11 +87,149 @@ function CitationChip({ number, source }: { number: number; source?: Source }) {
   );
 }
 
-function answerMarkdown(turn: Turn) {
-  return turn.answer.replace(/\[(\d+)\](?!\()/g, (citation, number) => {
+const PROTECTED = /(`[^`]*`|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)/;
+
+function answerMarkdown(turn: Turn, mentions: string[] = []) {
+  let text = turn.answer.replace(/\[(\d+)\](?!\()/g, (citation, number) => {
     const source = turn.sources[Number(number) - 1];
     return source ? citation + "(" + source.url.replaceAll("(", "%28").replaceAll(")", "%29") + ")" : citation;
   });
+  // Link the first mention of each entity that has related pages, outside code, links and URLs.
+  mentions.forEach((name, index) => {
+    const pattern = new RegExp("(?<![\\w])" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w])");
+    const parts = text.split(PROTECTED);
+    for (let part = 0; part < parts.length; part += 2) {
+      if (pattern.test(parts[part])) {
+        parts[part] = parts[part].replace(pattern, (match) => `[${match}](#related-${index})`);
+        text = parts.join("");
+        return;
+      }
+    }
+  });
+  return text;
+}
+
+function groupByEntity(items: RelatedItem[]) {
+  const groups = new Map<string, RelatedItem[]>();
+  for (const item of items) {
+    for (const entity of item.entities) {
+      if (/[[\]()]/.test(entity)) continue;
+      const pages = groups.get(entity) ?? [];
+      if (pages.length < 3 && !pages.some((page) => page.url === item.url)) groups.set(entity, [...pages, item]);
+    }
+  }
+  return [...groups.entries()].map(([name, pages]) => ({ name, pages }));
+}
+
+function RelatedMention({ label, pages }: { label: string; pages: RelatedItem[] }) {
+  return (
+    <span className="mention-wrap">
+      <button type="button" className="mention" aria-label={`Related pages about ${label}`}>
+        {label}<ExternalLink size={11} aria-hidden="true" />
+      </button>
+      <span className="mention-card" role="tooltip">
+        <span className="citation-domain">Read more about {label}</span>
+        {pages.map((page) => {
+          const summary = page.description || page.excerpt;
+          return (
+            <a key={page.url} className="mention-page" href={page.url} target="_blank" rel="noopener noreferrer">
+              <small>{page.domain}{formatDate(page.published) && <> · {formatDate(page.published)}</>}</small>
+              <strong>{page.title}</strong>
+              <span>{summary.slice(0, 160)}{summary.length > 160 ? "…" : ""}</span>
+            </a>
+          );
+        })}
+      </span>
+    </span>
+  );
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return value && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+}
+
+function DocumentChip({ reference, quote }: { reference?: DocumentRef; quote?: string }) {
+  if (!reference) return null;
+  return (
+    <a className="doc-chip" href={reference.url} target="_blank" rel="noopener noreferrer"
+      title={quote ? `${reference.title}: “${quote}”` : reference.title}>
+      {reference.label.startsWith("[") && <span>{reference.label}</span>} {hostOf(reference.url)}
+    </a>
+  );
+}
+
+function CrossDocumentAnalysis({ analysis }: { analysis: Analysis }) {
+  const byId = new Map(analysis.documents.map((document) => [document.id, document]));
+  const { common_findings: common, conflicts, unique_insights: unique, clusters } = analysis;
+  if (!common.length && !conflicts.length && !unique.length) return null;
+  const agreeing = new Set(common.flatMap((finding) => finding.sources.map((quote) => quote.document))).size;
+  return (
+    <details className="analysis">
+      <summary>
+        {common.length > 0 && <span className="badge-agree"><Check size={13} aria-hidden="true" /> {agreeing} sources agree on {common.length} {common.length === 1 ? "point" : "points"}</span>}
+        {conflicts.length > 0 && <span className="badge-conflict">⚠ {conflicts.length} possible {conflicts.length === 1 ? "conflict" : "conflicts"}</span>}
+        {unique.length > 0 && <span>{unique.length} unique {unique.length === 1 ? "insight" : "insights"}</span>}
+      </summary>
+      <p className="analysis-note">Quotes from the answer’s sources and related pages. Similar wording means two sources discuss
+        the same thing, not that they are correct.</p>
+      {common.length > 0 && <section>
+        <h3>Common findings</h3>
+        <ul>{common.map((finding, index) => (
+          <li key={index}>
+            <q>{finding.text}</q>
+            <div className="chips">Found in {finding.sources.length} sources: {finding.sources.map((quote) => (
+              <DocumentChip key={quote.document} reference={byId.get(quote.document)} quote={quote.text} />
+            ))}</div>
+          </li>
+        ))}</ul>
+      </section>}
+      {conflicts.length > 0 && <section>
+        <h3>Possible conflicts</h3>
+        <ul>{conflicts.map((conflict, index) => (
+          <li key={index} className="conflict">
+            <span className="analysis-reason">{conflict.reason}</span>
+            {conflict.claims.map((quote) => (
+              <div key={quote.document}><q>{quote.text}</q> <DocumentChip reference={byId.get(quote.document)} /></div>
+            ))}
+          </li>
+        ))}</ul>
+      </section>}
+      {unique.length > 0 && <section>
+        <h3>Unique insights</h3>
+        <ul>{unique.map((quote) => (
+          <li key={quote.document}><q>{quote.text}</q> <DocumentChip reference={byId.get(quote.document)} /></li>
+        ))}</ul>
+      </section>}
+      {clusters.length > 0 && <section>
+        <h3>Related documents</h3>
+        <ul>{clusters.map((cluster, index) => (
+          <li key={index}><strong>{cluster.label}</strong> <div className="chips">{cluster.documents.map((id) => (
+            <DocumentChip key={id} reference={byId.get(id)} />
+          ))}</div></li>
+        ))}</ul>
+      </section>}
+    </details>
+  );
+}
+
+type MentionGroup = { name: string; pages: RelatedItem[] };
+
+function RelatedResearch({ state, unplaced }: { state?: IntelligenceState; unplaced: MentionGroup[] }) {
+  if (!state || state.status === "error") return null;
+  if (state.status === "loading") {
+    return <p className="related-loading" aria-busy="true">Comparing sources and finding related pages…</p>;
+  }
+  const analysis = state.data?.analysis;
+  return (
+    <div className="related">
+      {unplaced.length > 0 && <p className="read-more"><Compass size={14} aria-hidden="true" /> Read more:{" "}
+        {unplaced.map((group) => <RelatedMention key={group.name} label={group.name} pages={group.pages} />)}
+      </p>}
+      {analysis && <CrossDocumentAnalysis analysis={analysis} />}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -92,6 +243,28 @@ export default function Home() {
   const [menu, setMenu] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Related research is keyed by "<thread id>:<turn index>" and kept apart from the turns, so it can
+  // arrive after the answer (even while the next question runs) without overwriting thread state.
+  const [research, setResearch] = useState<Record<string, IntelligenceState>>({});
+  useEffect(() => {
+    try { setResearch(JSON.parse(localStorage.getItem("prama-research") || "{}")); } catch {}
+  }, []);
+
+  function loadResearch(key: string, body: object) {
+    setResearch((all) => ({ ...all, [key]: { status: "loading" } }));
+    fetch("/api/related", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Related research is unavailable.");
+        const data: Intelligence = await response.json();
+        setResearch((all) => {
+          const next = { ...all, [key]: { status: "done" as const, data } };
+          const kept = Object.entries(next).filter(([, value]) => value.status === "done").slice(-30);
+          try { localStorage.setItem("prama-research", JSON.stringify(Object.fromEntries(kept))); } catch {}
+          return next;
+        });
+      })
+      .catch(() => setResearch((all) => ({ ...all, [key]: { status: "error" } })));
+  }
   const session = useRef("");
   const request = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -171,6 +344,14 @@ export default function Home() {
         update();
       });
       if (!completed) throw new Error("The stream ended early. Try again.");
+      if (mode === "web" && turn.sources.length > 0) {
+        // Runs after the answer is complete and never blocks the next question.
+        loadResearch(thread.id + ":" + thread.turns.length, {
+          question: clean,
+          answer: turn.answer,
+          sources: turn.sources.slice(0, 8).map(({ url, title, content }) => ({ url, title, content: content.slice(0, 8000) })),
+        });
+      }
     } catch (failure) {
       setError(controller.signal.aborted ? "Answer stopped." : failure instanceof Error ? failure.message : "Something went wrong.");
       if (!turn.answer) {
@@ -230,16 +411,29 @@ export default function Home() {
               {index === 0 ? <h1>{turn.question}</h1> : <h2>{turn.question}</h2>}
               <div className="turn-layout">
                 <div className="turn-main">
-                  {turn.answer && <div className="answer"><Markdown remarkPlugins={[remarkGfm]} disallowedElements={["img"]} components={{
-                    a: ({ children, href }) => {
-                      const label = String(children);
-                      if (/^\d+$/.test(label)) {
-                        const number = Number(label);
-                        return <CitationChip number={number} source={turn.sources[number - 1]} />;
-                      }
-                      return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
-                    },
-                  }}>{answerMarkdown(turn)}</Markdown></div>}
+                  {(() => {
+                    const state = research[current.id + ":" + index];
+                    const groups = state?.status === "done" ? groupByEntity(state.data?.items ?? []) : [];
+                    const markdown = answerMarkdown(turn, groups.map((group) => group.name));
+                    const unplaced = groups.filter((_, i) => !markdown.includes(`(#related-${i})`));
+                    return <>
+                      {turn.answer && <div className="answer"><Markdown remarkPlugins={[remarkGfm]} disallowedElements={["img"]} components={{
+                        a: ({ children, href }) => {
+                          const label = String(children);
+                          const related = href?.match(/^#related-(\d+)$/);
+                          if (related && groups[Number(related[1])]) {
+                            return <RelatedMention label={label} pages={groups[Number(related[1])].pages} />;
+                          }
+                          if (/^\d+$/.test(label)) {
+                            const number = Number(label);
+                            return <CitationChip number={number} source={turn.sources[number - 1]} />;
+                          }
+                          return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+                        },
+                      }}>{markdown}</Markdown></div>}
+                      <RelatedResearch state={state} unplaced={unplaced} />
+                    </>;
+                  })()}
                 </div>
                 {turn.sources.length > 0 && <aside className="source-rail" aria-label="Sources">
                   <div className="source-heading">

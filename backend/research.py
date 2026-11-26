@@ -48,6 +48,8 @@ class Source(BaseModel):
     url: HttpUrl
     title: str
     content: str
+    description: str = ""
+    published: str = ""
     score: float = 0.0
     passages: list[str] = Field(default_factory=list, exclude=True)
 
@@ -180,7 +182,9 @@ def source_from_item(item):
     if not url or not content:
         return None
     try:
-        return Source(url=url, title=str(title)[:300], content=clean_text(content)[:20000])
+        return Source(url=url, title=str(title)[:300], content=clean_text(content)[:20000],
+                      description=clean_text(item.get("description"))[:300],
+                      published=clean_text(item.get("publishedTime") or item.get("date"))[:40])
     except ValueError:
         return None
 
