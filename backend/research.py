@@ -545,7 +545,39 @@ async def rank_sources(client, question, queries, sources):
     return final[: settings.max_sources]
 
 
+FOLLOWUPS_RE = re.compile(r"<followups>(.*?)(?:</followups>|$)", re.S | re.I)
+FOLLOWUP_LEAD_RE = re.compile(
+    r"(?:\n[ \t]*(?:-{3,}|\*{3,}|_{3,}|[#>*_ \t]*follow\W?ups?(?:[ \t]+questions?)?[*_: \t]*)?[ \t]*)+$", re.I
+)
+FOLLOWUP_INSTRUCTION = (
+    "\n\nAlways end your reply with 3 or 4 short follow-up questions the user is likely to ask next, "
+    "one per line, wrapped exactly like this:\n<followups>\nFirst question?\nSecond question?\n</followups>\n"
+    "The follow-up questions are not part of the answer and need no citations."
+)
+
+
+def split_followups(text):
+    """Separate the follow-up block the model appends from the answer itself."""
+    match = FOLLOWUPS_RE.search(text)
+    if not match:
+        return text, []
+    followups, seen = [], set()
+    for line in match.group(1).splitlines():
+        question = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
+        if 8 <= len(question) <= 200 and question.lower() not in seen:
+            seen.add(question.lower())
+            followups.append(question)
+    # Models sometimes put a horizontal rule or a "Follow-ups" heading before the block;
+    # drop those along with it.
+    answer = FOLLOWUP_LEAD_RE.sub("", "\n" + text[: match.start()].rstrip()).removeprefix("\n")
+    return answer.rstrip(), followups[:4]
+
+
 def answer_instruction(mode):
+    return base_instruction(mode) + FOLLOWUP_INSTRUCTION
+
+
+def base_instruction(mode):
     if mode == "chat":
         return (
             "Answer clearly in Markdown. This is a chat-only turn with no web sources, "
