@@ -67,6 +67,25 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
 .history-item svg { flex-shrink: 0; }
 .history-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-item:hover, .history-item.active { background: #e2dccb; }
+.history-row { display: flex; align-items: center; gap: 1px; border-radius: 8px; padding-right: 3px; }
+.history-row .history-item { flex: 1; min-width: 0; background: none !important; }
+.history-row:hover, .history-row.active { background: #e2dccb; }
+.history-action { flex-shrink: 0; display: none; padding: 5px; border-radius: 6px; color: var(--muted); }
+.history-row:hover .history-action, .history-row.active .history-action, .history-action:focus-visible, .history-action.pinned { display: inline-flex; }
+.history-action:hover { color: var(--ink); background: #0000000f; }
+@media (hover: none) { .history-action { display: inline-flex; } }
+.history-menu { position: fixed; z-index: 50; min-width: 168px; padding: 5px; display: grid; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px #14151d33; }
+.history-menu button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: var(--ink); font-size: 14px; text-align: left; }
+.history-menu button:hover, .history-menu button:focus-visible { background: var(--amber-soft); outline: none; }
+.history-menu .danger { color: #c2410c; }
+.history-menu .danger:hover { background: #c2410c1a; }
+[data-theme="dark"] .history-row:hover, [data-theme="dark"] .history-row.active { background: #161718; }
+[data-theme="dark"] .history-action:hover { background: #ffffff14; }
+[data-theme="dark"] .history-menu { background: #161718; border-color: #2a2b2c; box-shadow: 0 16px 40px #0009; }
+[data-theme="dark"] .history-menu button:hover { background: #222324; }
+[data-theme="dark"] .history-menu .danger { color: #f87171; }
+.history-edit { padding: 3px 0; }
+.history-edit input { width: 100%; padding: 8px 9px; border: 1px solid #c9a24a; border-radius: 8px; background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; outline: none; }
 main { margin-left: 248px; min-height: 100vh; background: radial-gradient(ellipse at 50% -15%, #fdfbf4 0%, var(--cream) 58%); }
 .top { height: 70px; border-bottom: 1px solid var(--line); padding: 0 36px; display: flex; align-items: center; gap: 15px; }
 .top span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 14px; }
