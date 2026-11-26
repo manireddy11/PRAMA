@@ -4,6 +4,13 @@
 
 <p align="center"><strong>Ask. Verify. Know.</strong><br />Answers you can check.</p>
 
+
+<p align="center">
+  <img src="./Screenshot%202026-11-26%20135628.png" alt="PRAMA Screenshot" width="700" />
+</p>
+
+
+
 > Prama comes from Sanskrit *pramāṇa*: a valid source of knowledge, or evidence.
 > A P whose bowl is a lens, with the source at its centre.
 
