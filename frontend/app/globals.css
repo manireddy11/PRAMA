@@ -86,6 +86,9 @@ main { margin-left: 248px; min-height: 100vh; background: radial-gradient(ellips
 .composer textarea::placeholder { color: #918a7b; }
 .composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
 .mode { display: flex; flex-wrap: wrap; gap: 4px; }
+.suggestion-hint { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.suggestion-hint kbd { font: inherit; font-size: 11px; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-right: 4px; opacity: .8; }
+@media (max-width: 530px), (hover: none) { .suggestion-hint { display: none; } }
 .mode button { font-size: 14px; padding: 8px 10px; }
 .mode button[aria-pressed=true] { background: var(--amber-soft); color: var(--amber-deep); }
 .send { width: 42px; height: 42px; flex-shrink: 0; }

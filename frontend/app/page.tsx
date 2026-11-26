@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 type Source = { url: string; title: string; content: string };
 type Verification = { sentences: number; cited: number; repaired: number; removed: number; sources: number };
-type Turn = { question: string; answer: string; sources: Source[]; verification?: Verification };
+type Turn = { question: string; answer: string; sources: Source[]; verification?: Verification; followups?: string[] };
 type Thread = { id: string; turns: Turn[] };
 type SavedTurn = Turn & { thread_id: string };
 type Mode = "web" | "chat";
@@ -95,6 +95,21 @@ export default function Home() {
   const session = useRef("");
   const request = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const latest = current?.turns[current.turns.length - 1];
+  const followups = busy ? [] : latest?.followups ?? [];
+  const followupKey = followups.join("\n");
+  const suggestion = followups.length ? followups[suggestionIndex % followups.length] : "";
+
+  // Show one follow-up at a time as placeholder text. Rotate slowly, and only while the
+  // composer is idle, so the hint never changes while someone is reading or typing.
+  useEffect(() => setSuggestionIndex(0), [followupKey]);
+  useEffect(() => {
+    if (followups.length < 2 || composerFocused || question) return;
+    const timer = setInterval(() => setSuggestionIndex((index) => index + 1), 12000);
+    return () => clearInterval(timer);
+  }, [followupKey, followups.length, composerFocused, question]);
 
   useEffect(() => {
     const key = localStorage.getItem("prama-session") || localStorage.getItem("fieldwork-session") || crypto.randomUUID();
@@ -165,6 +180,7 @@ export default function Home() {
         if (kind === "status") setStatus(data.message);
         if (kind === "sources") turn = { ...turn, sources: data };
         if (kind === "verification") turn = { ...turn, verification: data };
+        if (kind === "followups") turn = { ...turn, followups: data };
         if (kind === "token") turn = { ...turn, answer: turn.answer + data.text };
         if (kind === "error") throw new Error(data.message);
         if (kind === "done") completed = true;
@@ -262,14 +278,20 @@ export default function Home() {
           <div className="feedback" aria-live="polite">{error ? <p role="alert">{error}</p> : status && <p>{status}{busy ? "…" : ""}</p>}</div>
           <form className="composer" onSubmit={onSubmit}>
             <textarea ref={composer} aria-label="Question" value={question} maxLength={2000} rows={2}
-              placeholder={current ? "Ask a follow-up…" : "What do you want to find out?"}
+              placeholder={suggestion || (current ? "Ask a follow-up…" : "What do you want to find out?")}
               onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(question); } }} />
+              onFocus={() => setComposerFocused(true)}
+              onBlur={() => setComposerFocused(false)}
+              onKeyDown={(event) => {
+                if (event.key === "Tab" && !event.shiftKey && suggestion && !question) { event.preventDefault(); setQuestion(suggestion); return; }
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(question); }
+              }} />
             <div className="composer-actions">
               <div className="mode" aria-label="Answer mode">
                 <Button type="button" aria-pressed={mode === "web"} onClick={() => setMode("web")}><Globe2 size={16} /> Web search</Button>
                 <Button type="button" aria-pressed={mode === "chat"} onClick={() => setMode("chat")}><MessageSquare size={16} /> Chat</Button>
               </div>
+              {suggestion && !question && <span className="suggestion-hint" aria-hidden="true"><kbd>Tab</kbd> to use suggestion</span>}
               {busy ? <Button type="button" className="send" variant="primary" aria-label="Stop answer" onClick={() => request.current?.abort()}><Square size={17} /></Button>
                 : <Button type="submit" className="send" variant="primary" aria-label="Send question" disabled={!question.trim()}><Send size={17} /></Button>}
             </div>

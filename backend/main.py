@@ -8,7 +8,8 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
-from research import JinaAuthError, Query, Source, generate_answer, retrieve_sources, settings, verify_answer
+from research import (JinaAuthError, Query, Source, generate_answer, retrieve_sources, settings, split_followups,
+                      verify_answer)
 
 log = logging.getLogger(__name__)
 PERSISTENCE = bool(settings.supabase_url and settings.supabase_secret_key)
@@ -91,15 +92,19 @@ async def search(query: Query, thread: UUID, x_session_id: UUID = Header()):
             yield event("status", {"message": "Writing answer"})
             answer = ""
             verification = None
+            followups = []
             if settings.demo_mode:
                 answer = ("**Demo mode**\n\nThis sample shows how Prama streams an answer."
                           " Jina Reader extracts full pages [1], and Groq writes the cited answer [2]."
                           " Live responses require provider credentials.")
+                followups = ["How does Prama verify each citation?", "Which providers does Prama need for live answers?",
+                             "How does Jina Reader extract full pages?"]
             elif query.mode == "web" and not sources:
                 answer = ("I couldn't find web sources for this question. "
                           "Try rephrasing it or asking something more specific.")
             else:
-                answer = await generate_answer(app.state.client, query, sources)
+                # Follow-up questions arrive in the same completion; remove them before verification.
+                answer, followups = split_followups(await generate_answer(app.state.client, query, sources))
                 if query.mode == "web" and sources:
                     yield event("status", {"message": "Verifying citations"})
                     answer, verification = await verify_answer(app.state.client, answer, sources)
@@ -109,6 +114,8 @@ async def search(query: Query, thread: UUID, x_session_id: UUID = Header()):
             for chunk in chunks(answer):
                 yield event("token", {"text": chunk})
                 await asyncio.sleep(0.008)
+            if followups:
+                yield event("followups", followups)
             saved = False
             if PERSISTENCE and not settings.demo_mode:
                 try:
