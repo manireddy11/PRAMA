@@ -27,6 +27,9 @@ A web question follows a Perplexity-style pipeline:
 
 Upstash Redis caches search results for 15 minutes, and Pinecone keeps a `prama-web` namespace of previously seen pages for extra recall.
 
+![PRAMA Screenshot 2](./Screenshot%202026-11-26%20135711.png)
+
+
 ## Run locally
 
 Use Node.js 22+ and Python 3.11 or 3.12. Open two PowerShell terminals from the repository.
