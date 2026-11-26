@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BookOpen, Check, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Plus, Send, Square, Sun, X } from "lucide-react";
+import { BookOpen, Check, Ellipsis, ExternalLink, Globe2, History, Menu, MessageSquare, Moon, Pencil, Pin, PinOff, Plus, Send, Square, Sun, Trash2, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,13 @@ export default function Home() {
   const [menu, setMenu] = useState(false);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Sidebar organisation, kept in this browser: custom names, pinned searches (newest pin first) and
+  // deleted searches (so history loaded from Supabase does not bring them back).
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [pinned, setPinned] = useState<string[]>([]);
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+  const [actions, setActions] = useState<{ id: string; top: number; left: number } | null>(null);
+  const pinnedRef = useRef<string[]>([]);
   const session = useRef("");
   const request = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +113,11 @@ export default function Home() {
     setTheme(initial);
     document.documentElement.dataset.theme = initial;
     try { setThreads(JSON.parse(localStorage.getItem("prama-threads") || localStorage.getItem("fieldwork-threads") || "[]")); } catch {}
+    try { setNames(JSON.parse(localStorage.getItem("prama-names") || "{}")); } catch {}
+    try {
+      pinnedRef.current = JSON.parse(localStorage.getItem("prama-pinned") || "[]");
+      setPinned(pinnedRef.current);
+    } catch {}
     const controller = new AbortController();
     fetch("/api/search", { headers: { "x-session-id": key }, signal: controller.signal })
       .then(async (response) => {
@@ -117,11 +129,125 @@ export default function Home() {
           thread.turns.unshift(row);
           grouped.set(row.thread_id, thread);
         }
-        setThreads((local) => [...local, ...Array.from(grouped.values()).filter((thread) => !local.some(({ id }) => id === thread.id))]);
+        let hidden: string[] = [];
+        try { hidden = JSON.parse(localStorage.getItem("prama-hidden") || "[]"); } catch {}
+        setThreads((local) => [...local, ...Array.from(grouped.values())
+          .filter((thread) => !hidden.includes(thread.id) && !local.some(({ id }) => id === thread.id))]);
       })
       .catch(() => {});
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!actions) return;
+    const close = (event: Event) => {
+      if (event instanceof MouseEvent && (event.target as Element).closest?.(".history-menu")) return;
+      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+      setActions(null);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [actions]);
+
+  function store(key: string, value: unknown) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }
+
+  function finishEditing() {
+    if (!editing) return;
+    const name = editing.value.trim().slice(0, 80);
+    if (name) {
+      const next = { ...names, [editing.id]: name };
+      setNames(next);
+      store("prama-names", next);
+    }
+    setEditing(null);
+  }
+
+  function togglePin(id: string) {
+    const next = pinnedRef.current.includes(id) ? pinnedRef.current.filter((item) => item !== id) : [id, ...pinnedRef.current];
+    pinnedRef.current = next;
+    setPinned(next);
+    store("prama-pinned", next);
+    setActions(null);
+  }
+
+  function remove(thread: Thread) {
+    setActions(null);
+    if (!window.confirm(`Delete "${names[thread.id] ?? thread.turns[0].question}"? This can't be undone.`)) return;
+    setThreads((existing) => {
+      const next = existing.filter(({ id }) => id !== thread.id);
+      store("prama-threads", next);
+      return next;
+    });
+    let hidden: string[] = [];
+    try { hidden = JSON.parse(localStorage.getItem("prama-hidden") || "[]"); } catch {}
+    store("prama-hidden", [thread.id, ...hidden.filter((id) => id !== thread.id)].slice(0, 500));
+    const nextNames = { ...names };
+    delete nextNames[thread.id];
+    setNames(nextNames);
+    store("prama-names", nextNames);
+    if (pinnedRef.current.includes(thread.id)) togglePin(thread.id);
+    if (current?.id === thread.id) open(null);
+  }
+
+  function historyRow(thread: Thread) {
+    const title = names[thread.id] ?? thread.turns[0].question;
+    const isPinned = pinned.includes(thread.id);
+    if (editing?.id === thread.id) {
+      return (
+        <form key={thread.id} className="history-edit" onSubmit={(event) => { event.preventDefault(); finishEditing(); }}>
+          <input autoFocus aria-label="Rename search" maxLength={80}
+            value={editing.value} onChange={(event) => setEditing({ id: thread.id, value: event.target.value })}
+            onFocus={(event) => event.target.select()}
+            onBlur={(event) => { if (!event.target.dataset.cancelled) finishEditing(); }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.currentTarget.dataset.cancelled = "1";
+              setEditing(null);
+            }} />
+        </form>
+      );
+    }
+    return (
+      <div key={thread.id} className={"history-row " + (current?.id === thread.id || actions?.id === thread.id ? "active" : "")}>
+        <button className="history-item" onClick={() => open(thread)} disabled={busy} title={title}>
+          <span>{title}</span>
+        </button>
+        <button className={"history-action " + (isPinned ? "pinned" : "")} aria-label={isPinned ? `Unpin ${title}` : `Pin ${title}`}
+          title={isPinned ? "Unpin" : "Pin"} onClick={() => togglePin(thread.id)}>
+          {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+        </button>
+        <button className="history-action" aria-label={`More options for ${title}`} aria-haspopup="menu" aria-expanded={actions?.id === thread.id}
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            setActions(actions?.id === thread.id ? null
+              : { id: thread.id, top: Math.min(box.bottom + 4, window.innerHeight - 140), left: Math.min(box.left, window.innerWidth - 180) });
+          }}>
+          <Ellipsis size={15} />
+        </button>
+        {actions?.id === thread.id && (
+          <div className="history-menu" role="menu" style={{ top: actions.top, left: actions.left }}>
+            <button role="menuitem" onClick={() => togglePin(thread.id)}>
+              {isPinned ? <><PinOff size={15} /> Unpin</> : <><Pin size={15} /> Pin</>}
+            </button>
+            <button role="menuitem" onClick={() => { setActions(null); setEditing({ id: thread.id, value: title }); }}>
+              <Pencil size={15} /> Rename
+            </button>
+            <button role="menuitem" className="danger" disabled={busy} onClick={() => remove(thread)}>
+              <Trash2 size={15} /> Delete
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   function open(thread: Thread | null) {
     if (request.current) return;
@@ -181,7 +307,9 @@ export default function Home() {
       if (completed || turn.answer) {
         const updated = { ...thread, turns: [...thread.turns, turn] };
         setThreads((existing) => {
-          const next = [updated, ...existing.filter(({ id }) => id !== updated.id)].slice(0, 30);
+          // Keep the 30 most recent searches, plus any pinned ones beyond that.
+          const next = [updated, ...existing.filter(({ id }) => id !== updated.id)]
+            .filter((item, position) => position < 30 || pinnedRef.current.includes(item.id));
           try { localStorage.setItem("prama-threads", JSON.stringify(next)); } catch {}
           return next;
         });
@@ -202,14 +330,14 @@ export default function Home() {
       <aside className={"rail " + (menu ? "rail-open" : "")}>
         <button className="brand" onClick={() => open(null)}><PramaMark className="brand-mark" /> Prama</button>
         <Button className="new-search" onClick={() => open(null)} disabled={busy}><Plus size={17} /> New search</Button>
-        <div className="history-label"><History size={16} /> Recent searches</div>
-        <nav aria-label="Recent searches">
+        <nav aria-label="Searches">
+          {pinned.some((id) => threads.some((thread) => thread.id === id)) && <>
+            <div className="history-label"><Pin size={16} /> Pinned</div>
+            {pinned.map((id) => threads.find((thread) => thread.id === id)).filter((thread): thread is Thread => !!thread).map(historyRow)}
+          </>}
+          <div className="history-label"><History size={16} /> Recent searches</div>
           {threads.length === 0 && <p className="history-empty">Your searches will appear here.</p>}
-          {threads.map((thread) => (
-            <button key={thread.id} className={"history-item " + (current?.id === thread.id ? "active" : "")} onClick={() => open(thread)} disabled={busy}>
-              <MessageSquare size={15} /><span>{thread.turns[0].question}</span>
-            </button>
-          ))}
+          {threads.filter((thread) => !pinned.includes(thread.id)).map(historyRow)}
         </nav>
       </aside>
       <main>
