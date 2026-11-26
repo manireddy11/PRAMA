@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 log = logging.getLogger(__name__)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 JINA_TIMEOUT = 30
+FULL_TEXT_MIN_CHARS = 2000
 
 
 class JinaAuthError(Exception):
@@ -81,6 +82,19 @@ def reranker():
 
 
 model_lock = asyncio.Lock()
+
+
+async def warm_models():
+    """Load the local models in the background so the first question does not wait for them."""
+    try:
+        async with model_lock:
+            await asyncio.to_thread(embedder)
+            if settings.enable_reranking:
+                await asyncio.to_thread(reranker)
+        log.info("Local models loaded")
+    except Exception as exc:
+        log.warning("Model warm-up failed: %s", type(exc).__name__)
+
 
 STOPWORDS = {
     "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had",
@@ -406,6 +420,9 @@ async def vector_upsert(client, sources):
 
 
 async def enrich_sources(client, sources):
+    # Jina Search usually returns each page's full text already. Only fetch pages whose
+    # search content looks like a short snippet, which saves a Reader call per source.
+    sources = [source for source in sources if len(source.content) < FULL_TEXT_MIN_CHARS]
     semaphore = asyncio.Semaphore(3)
 
     async def read(source):

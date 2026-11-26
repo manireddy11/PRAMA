@@ -8,7 +8,8 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
-from research import JinaAuthError, Query, Source, generate_answer, retrieve_sources, settings, verify_answer
+from research import (JinaAuthError, Query, Source, generate_answer, retrieve_sources, settings, verify_answer,
+                      warm_models)
 
 log = logging.getLogger(__name__)
 PERSISTENCE = bool(settings.supabase_url and settings.supabase_secret_key)
@@ -18,7 +19,13 @@ PERSISTENCE = bool(settings.supabase_url and settings.supabase_secret_key)
 async def lifespan(app):
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
         app.state.client = client
-        yield
+        # Start loading models now; requests that need them wait on model_lock.
+        warmup = None if settings.demo_mode else asyncio.create_task(warm_models())
+        try:
+            yield
+        finally:
+            if warmup:
+                warmup.cancel()
 
 
 app = FastAPI(title="Prama", lifespan=lifespan)
