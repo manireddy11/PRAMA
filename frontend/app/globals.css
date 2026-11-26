@@ -127,7 +127,7 @@ main { margin-left: 248px; min-height: 100vh; background: radial-gradient(ellips
   border-color: #c9a24a !important;
 }
 [data-theme="dark"] .suggestions span { color: var(--amber-deep) !important; }
-.suggestions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 19px; }
+.suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 19px; }
 .suggestions button { background: var(--paper); border: 1px solid #ded8c7; border-radius: 13px; text-align: left; padding: 15px; font-size: 15px; line-height: 1.45; color: var(--ink); }
 .suggestions button:hover, .source:hover { border-color: #c9a24a; }
 .suggestions span { display: block; margin-bottom: 7px; color: var(--amber-deep); font-size: 14px; font-weight: 600; }

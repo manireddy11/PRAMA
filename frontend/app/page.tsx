@@ -14,9 +14,10 @@ type SavedTurn = Turn & { thread_id: string };
 type Mode = "web" | "chat";
 
 const prompts = [
-  ["Science", "How do trees share resources through fungi?"],
-  ["Technology", "What makes a heat pump more efficient?"],
-  ["Design", "What are the principles of great wayfinding?"],
+  ["Career", "How to become top LinkedIn creator"],
+  ["Marketing", "Ad campaign for your brand"],
+  ["Jobs", "Search for most recent AI engineering jobs"],
+  ["Learning", "Best AI engineering courses"],
 ];
 
 async function readEvents(response: Response, onEvent: (name: string, data: string) => void) {
